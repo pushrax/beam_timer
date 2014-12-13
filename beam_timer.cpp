@@ -1,6 +1,6 @@
 #include "application.h"
 #include "stm32_it.h"
-#include "tractortimer.h"
+#include "beam_timer.h"
 
 uint16_t display_serial = D0, display_rclk = D1, display_srclk = D2,
          exit_in = D3, up_in = D4, set_in = D5,
