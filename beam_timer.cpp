@@ -2,6 +2,8 @@
 #include "stm32_it.h"
 #include "beam_timer.h"
 
+SYSTEM_MODE(SEMI_AUTOMATIC);
+
 uint16_t display_serial = D0, display_rclk = D1, display_srclk = D2,
          exit_in = D3, up_in = D4, set_in = D5,
          recv0_out = A0, recv0_in = A1, recv1_out = A4, recv1_in = A5;
@@ -115,9 +117,9 @@ enum Modes
 
 uint16_t centiseconds = 0, seconds = 0, minutes = 0;
 uint16_t last_centiseconds = 0, last_seconds = 0, last_minutes = 0;
-int state = STOPPED, mode = CLOCK, display_last = 0, samples = 0;
+int state = STOPPED, mode = TEXT, display_last = 0, samples = 0;
 
-String text = "Shopify";
+String text = "Connecting";
 
 uint8_t extraLeds = 0;
 uint8_t amLed = 1, pmLed = 1 << 1, colonLed = 1 << 3, dotLed = 1 << 4;
@@ -327,20 +329,15 @@ void finalize_time()
     display_last = -1;
 }
 
-int debounce = 100;
+unsigned long debounce = 0;
 
 void check_buttons()
 {
-    if (debounce > 0) {
-        debounce--;
-        return;
-    }
+    if (debounce > millis()) return;
     if (mode == RACE)
     {
-        if (digitalRead(set_in) == HIGH) // Button C
-        {
-            finalize_time();
-        }
+        // Button C
+        if (digitalRead(set_in) == HIGH) finalize_time();
         if (digitalRead(up_in) == HIGH) // Button B
         {
             centiseconds = seconds = minutes = 0;
@@ -360,12 +357,31 @@ void check_buttons()
             samples = 0;
             display_last = 0;
         }
-        debounce = 50;
+        debounce = millis() + 250;
     }
 }
 
+unsigned long nextSync = 0;
+bool shouldConnect = true;
+bool connected = false;
+
 void loop()
 {
+    if (shouldConnect)
+    {
+        shouldConnect = false;
+        Spark.connect();
+        return;
+    }
+    if (Spark.connected() && !connected)
+    {
+        connected = true;
+
+        text = "Shopify";
+        if (mode == TEXT) mode = CLOCK;
+        Time.zone(-5);
+        Spark.function("text", setText);
+    }
     if (mode == RACE)
     {
         pinHigh(recv0_out);
@@ -388,6 +404,12 @@ void loop()
             extraLeds |= colonLed | dotLed;
         } else {
             extraLeds &= ~(colonLed | dotLed);
+        }
+
+        if (nextSync < millis() && Spark.connected())
+        {
+            Spark.syncTime();
+            nextSync = millis() + (60 * 60 * 1000); // 1 hour
         }
     }
     else if (mode == DEBUG1)
@@ -461,7 +483,4 @@ void setup()
     TIM_ITConfig(TIM3, TIM_IT_Update, ENABLE);
     TIM_ITConfig(TIM4, TIM_IT_Update, ENABLE);
     // TIM_ITConfig(TIM4, TIM_IT_CC2, ENABLE);
-
-    Time.zone(-5);
-    Spark.function("text", setText);
 }
