@@ -220,6 +220,14 @@ void write_string(int start, const char* str)
         {
             write_segments(i, display_segment_byte_mapping[str[k] - '0']);
         }
+        else if (str[k] == '-')
+        {
+            write_segments(i, 1 << 3);
+        }
+        else if (str[k] == '_')
+        {
+            write_segments(i, 1 << 2);
+        }
         else
         {
             write_segments(i, 0);
