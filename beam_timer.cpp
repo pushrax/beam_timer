@@ -5,7 +5,7 @@
 SYSTEM_MODE(SEMI_AUTOMATIC);
 
 uint16_t display_serial = D0, display_rclk = D1, display_srclk = D2,
-         exit_in = D3, up_in = D4, set_in = D5,
+         exit_in = D3, up_in = D6, set_in = D5,
          recv0_out = A0, recv0_in = A1, recv1_out = A4, recv1_in = A5;
 
 /*
