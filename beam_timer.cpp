@@ -319,7 +319,14 @@ extern "C" void TIM3_irq_handler(void)
     if (TIM_GetITStatus(TIM3, TIM_IT_Update) != RESET)
     {
         TIM_ClearITPendingBit(TIM3, TIM_IT_Update);
-        poll_receivers();
+        if (mode == RACE || mode == DEBUG1 || mode == DEBUG2) {
+            pinHigh(recv0_out);
+            pinHigh(recv1_out);
+            delayMicroseconds(100);
+            poll_receivers();
+            pinLow(recv0_out);
+            pinLow(recv1_out);
+        }
     }
 }
 
@@ -384,8 +391,6 @@ void loop()
     }
     if (mode == RACE)
     {
-        pinHigh(recv0_out);
-        pinHigh(recv1_out);
         extraLeds = colonLed;
     }
     else if (mode == CLOCK)
@@ -424,6 +429,10 @@ void loop()
     {
         extraLeds = 0;
     }
+    if (mode != RACE && mode != DEBUG1 && mode != DEBUG2) {
+        pinLow(recv0_out);
+        pinLow(recv1_out);
+    }
 
     check_buttons();
 }
@@ -444,6 +453,8 @@ void setup()
     pinMode(recv0_in, INPUT);
     pinMode(recv1_out, OUTPUT);
     pinMode(recv1_in, INPUT);
+    pinLow(recv0_out);
+    pinLow(recv1_out);
 
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
