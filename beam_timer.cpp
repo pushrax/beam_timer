@@ -386,7 +386,7 @@ void loop()
 
         text = "Shopify";
         if (mode == TEXT) mode = CLOCK;
-        Time.zone(-5);
+        Time.zone(-4);
         Spark.function("text", setText);
     }
     if (mode == RACE)
