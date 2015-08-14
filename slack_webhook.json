@@ -1,0 +1,12 @@
+{
+    "eventName": "slack-message",
+    "url": "https://hooks.slack.com/services/<redacted>",
+    "requestType": "POST",
+    "json": {
+        "channel": "#trackday",
+        "username": "TrackBot",
+        "text": "{{SPARK_EVENT_VALUE}}",
+        "icon_emoji": ":green_tractor::dash:"
+    },
+    "mydevices": true
+}
