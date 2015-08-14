@@ -178,6 +178,14 @@ void write_time(uint16_t centiseconds, uint16_t seconds, uint16_t minutes)
     pinHigh(display_rclk);
 }
 
+String get_time_string(uint16_t centiseconds, uint16_t seconds, uint16_t minutes)
+{
+    String output = String(minutes, DEC) + ":";
+    output += String(seconds / 10, DEC) + String(seconds % 10, DEC) + ".";
+    output += String(centiseconds / 10, DEC) + String(centiseconds % 10, DEC);
+    return output;
+}
+
 void write_number(int t)
 {
     pinLow(display_rclk);
@@ -242,7 +250,7 @@ int poll_receiver(int pin)
 {
     int val = analogRead(pin);
     if (mode == DEBUG1 || mode == DEBUG2) write_number(val);
-    return val > 1000;
+    return val >= 800;
 }
 
 void poll_receivers()
@@ -322,8 +330,8 @@ extern "C" void TIM3_irq_handler(void)
         if (mode == RACE || mode == DEBUG1 || mode == DEBUG2) {
             pinHigh(recv0_out);
             pinHigh(recv1_out);
-            delayMicroseconds(100);
             poll_receivers();
+        } else {
             pinLow(recv0_out);
             pinLow(recv1_out);
         }
@@ -334,6 +342,11 @@ void finalize_time()
 {
     state = STOPPED;
     display_last = -1;
+    if (last_centiseconds > 0 || last_seconds > 0 || last_minutes > 0)
+    {
+        String message = "Lap completed: " + get_time_string(last_centiseconds, last_seconds, last_minutes);
+        Spark.publish("slack-message", message, 60, PRIVATE);
+    }
 }
 
 unsigned long debounce = 0;
@@ -344,10 +357,15 @@ void check_buttons()
     if (mode == RACE)
     {
         // Button C
-        if (digitalRead(set_in) == HIGH) finalize_time();
+        if (digitalRead(set_in) == HIGH)
+        {
+            finalize_time();
+            debounce = millis() + 1000;
+        }
         if (digitalRead(up_in) == HIGH) // Button B
         {
             centiseconds = seconds = minutes = 0;
+            last_centiseconds = last_seconds = last_minutes = 0;
             state = WAITING;
             samples = 0;
             display_last = 0;
