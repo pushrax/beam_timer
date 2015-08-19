@@ -117,9 +117,12 @@ enum Modes
 
 uint16_t centiseconds = 0, seconds = 0, minutes = 0;
 uint16_t last_centiseconds = 0, last_seconds = 0, last_minutes = 0;
-int state = STOPPED, mode = TEXT, display_last = 0, samples = 0;
+int state = STOPPED, mode = TEXT, display_last = 0, last_samples = 0, samples = 0;
 
 String text = "Connecting";
+
+uint8_t laps = 0;
+int times[256];
 
 uint8_t extraLeds = 0;
 uint8_t amLed = 1, pmLed = 1 << 1, colonLed = 1 << 3, dotLed = 1 << 4;
@@ -152,6 +155,7 @@ inline void write_digit(uint8_t index, int n)
 
 void increment_cs()
 {
+    samples++;
     centiseconds++;
     if (centiseconds >= 100)
     {
@@ -249,8 +253,13 @@ void write_string(int start, const char* str)
 int poll_receiver(int pin)
 {
     int val = analogRead(pin);
-    if (mode == DEBUG1 || mode == DEBUG2) write_number(val);
-    return val >= 800;
+    if (mode == DEBUG1 || mode == DEBUG2)
+    {
+        if (val >= 900) extraLeds &= ~dotLed;
+        else extraLeds |= dotLed;
+        write_number(val);
+    }
+    return val >= 900;
 }
 
 void poll_receivers()
@@ -269,17 +278,21 @@ void poll_receivers()
     {
         if (state == STOPPED) return;
 
-        if (state == TIMING && display_last == 0 && !poll_receiver(recv1_in))
+        if (state == TIMING && display_last == 0 && !poll_receiver(recv0_in))
         {
             last_minutes = minutes;
             last_seconds = seconds;
             last_centiseconds = centiseconds;
             display_last = 200;
+            if (samples > 0) times[laps++] = samples - last_samples;
+            last_samples = samples;
         }
         else if (state == WAITING && !poll_receiver(recv0_in))
         {
             state = TIMING;
             samples = 0;
+            last_samples = 0;
+            laps = 0;
         }
     }
 }
@@ -297,7 +310,8 @@ extern "C" void TIM4_irq_handler(void)
         if (mode == RACE && display_last)
         {
             if (display_last > 0) display_last--;
-            write_time(last_centiseconds, last_seconds, last_minutes);
+            if (samples >= 200) write_time(last_centiseconds, last_seconds, last_minutes);
+            else write_time(centiseconds, seconds, minutes);
         }
         else if (mode == TEXT)
         {
@@ -315,10 +329,7 @@ extern "C" void TIM4_irq_handler(void)
                 }
             }
         }
-        else
-        {
-            write_time(centiseconds, seconds, minutes);
-        }
+        else write_time(centiseconds, seconds, minutes);
     }
 }
 
@@ -344,7 +355,14 @@ void finalize_time()
     display_last = -1;
     if (last_centiseconds > 0 || last_seconds > 0 || last_minutes > 0)
     {
-        String message = "Lap completed: " + get_time_string(last_centiseconds, last_seconds, last_minutes);
+        String message = String(laps, DEC) + " lap completed: ";
+        for (int i = 0; i < laps; i++)
+        {
+            if (i > 0) message += ", ";
+            message += get_time_string(times[i] % 100, times[i] / 100 % 60, times[i] / 6000);
+        }
+        Spark.publish("slack-message", message, 60, PRIVATE);
+        message = "Total time: " + get_time_string(last_centiseconds, last_seconds, last_minutes);
         Spark.publish("slack-message", message, 60, PRIVATE);
     }
 }
@@ -356,7 +374,7 @@ void check_buttons()
     if (debounce > millis()) return;
     if (mode == RACE)
     {
-        // Button C
+        // Button A
         if (digitalRead(set_in) == HIGH)
         {
             finalize_time();
@@ -368,10 +386,12 @@ void check_buttons()
             last_centiseconds = last_seconds = last_minutes = 0;
             state = WAITING;
             samples = 0;
+            last_samples = 0;
+            laps = 0;
             display_last = 0;
         }
     }
-    if (digitalRead(exit_in) == LOW) // Button A
+    if (digitalRead(exit_in) == LOW) // Button C
     {
         mode++;
         if (mode > TEXT) mode = CLOCK;
@@ -380,6 +400,8 @@ void check_buttons()
             centiseconds = seconds = minutes = 0;
             state = STOPPED;
             samples = 0;
+            last_samples = 0;
+            laps = 0;
             display_last = 0;
         }
         debounce = millis() + 250;
@@ -437,10 +459,12 @@ void loop()
     }
     else if (mode == DEBUG1)
     {
-        extraLeds = amLed;
+        extraLeds &= ~(colonLed | pmLed);
+        extraLeds |= amLed;
     }
     else if (mode == DEBUG2)
     {
+        extraLeds &= ~(colonLed | amLed);
         extraLeds = pmLed;
     }
     else
