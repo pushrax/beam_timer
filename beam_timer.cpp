@@ -280,11 +280,12 @@ void poll_receivers()
 
         if (state == TIMING && display_last == 0 && !poll_receiver(recv0_in))
         {
-            last_minutes = minutes;
-            last_seconds = seconds;
-            last_centiseconds = centiseconds;
+            int split = samples - last_samples;
+            last_minutes = split / 6000;
+            last_seconds = split / 100 % 60;
+            last_centiseconds = split % 100;
             display_last = 200;
-            if (samples > 0) times[laps++] = samples - last_samples;
+            if (samples > 0) times[laps++] = split;
             last_samples = samples;
         }
         else if (state == WAITING && !poll_receiver(recv0_in))
@@ -353,17 +354,22 @@ void finalize_time()
 {
     state = STOPPED;
     display_last = -1;
-    if (last_centiseconds > 0 || last_seconds > 0 || last_minutes > 0)
+    if (samples > 0)
     {
+        int best = samples;
         String message = String(laps, DEC) + " lap completed: ";
         for (int i = 0; i < laps; i++)
         {
             if (i > 0) message += ", ";
             message += get_time_string(times[i] % 100, times[i] / 100 % 60, times[i] / 6000);
+            if (times[i] < best) best = times[i];
         }
         Spark.publish("slack-message", message, 60, PRIVATE);
-        message = "Total time: " + get_time_string(last_centiseconds, last_seconds, last_minutes);
-        Spark.publish("slack-message", message, 60, PRIVATE);
+        //message = "Total time: " + get_time_string(last_centiseconds, last_seconds, last_minutes);
+        //Spark.publish("slack-message", message, 60, PRIVATE);
+        last_minutes = best / 6000;
+        last_seconds = best / 100 % 60;
+        last_centiseconds = best % 100;
     }
 }
 
