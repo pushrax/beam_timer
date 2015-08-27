@@ -1,5 +1,5 @@
 build:
-	particle compile beam_timer.cpp beam_timer.h  --saveTo firmware.bin
+	particle compile core beam_timer.cpp beam_timer.h  --saveTo firmware.bin
 
 flash:
 	particle flash tractortimer1 firmware.bin

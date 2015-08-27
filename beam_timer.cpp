@@ -115,9 +115,7 @@ enum Modes
     TEXT
 };
 
-uint16_t centiseconds = 0, seconds = 0, minutes = 0;
-uint16_t last_centiseconds = 0, last_seconds = 0, last_minutes = 0;
-int state = STOPPED, mode = TEXT, display_last = 0, last_samples = 0, samples = 0;
+int state = STOPPED, mode = TEXT, hold_time = -1, last_samples = 0, samples = 0;
 
 String text = "Connecting";
 
@@ -153,40 +151,28 @@ inline void write_digit(uint8_t index, int n)
     write_segments(index, display_segment_byte_mapping[n]);
 }
 
-void increment_cs()
-{
-    samples++;
-    centiseconds++;
-    if (centiseconds >= 100)
-    {
-        centiseconds = 0;
-        seconds++;
-    }
-    if (seconds >= 60)
-    {
-        seconds = 0;
-        minutes++;
-    }
-}
-
-void write_time(uint16_t centiseconds, uint16_t seconds, uint16_t minutes)
+void write_time(int samples)
 {
     if (mode == DEBUG1 || mode == DEBUG2) return;
     pinLow(display_rclk);
-    write_digit(0, minutes < 10 ? 10 : minutes / 10);
-    write_digit(1, minutes % 10);
-    write_digit(2, seconds / 10);
-    write_digit(3, seconds % 10);
-    write_digit(4, centiseconds / 10);
-    write_digit(5, centiseconds % 10);
+
+    // Minutes
+    write_digit(0, samples < 600000 ? 10 : samples / 600000);
+    write_digit(1, samples / 60000 % 10);
+    // Seconds
+    write_digit(2, samples / 1000 % 60 / 10);
+    write_digit(3, samples / 1000 % 10);
+    // Centiseconds
+    write_digit(4, samples / 100 % 10);
+    write_digit(5, samples / 10 % 10);
     pinHigh(display_rclk);
 }
 
-String get_time_string(uint16_t centiseconds, uint16_t seconds, uint16_t minutes)
+String get_time_string(int samples)
 {
-    String output = String(minutes, DEC) + ":";
-    output += String(seconds / 10, DEC) + String(seconds % 10, DEC) + ".";
-    output += String(centiseconds / 10, DEC) + String(centiseconds % 10, DEC);
+    String output = String(samples / 60000, DEC) + ":";
+    output += String(samples / 1000 % 60 / 10, DEC) + String(samples / 1000 % 10, DEC) + ".";
+    output += String(samples / 100 % 10, DEC) + String(samples / 10 % 10, DEC) + String(samples % 10, DEC);
     return output;
 }
 
@@ -278,41 +264,36 @@ void poll_receivers()
     {
         if (state == STOPPED) return;
 
-        if (state == TIMING && display_last == 0 && !poll_receiver(recv0_in))
+        if (!poll_receiver(recv0_in))
         {
-            int split = samples - last_samples;
-            last_minutes = split / 6000;
-            last_seconds = split / 100 % 60;
-            last_centiseconds = split % 100;
-            display_last = 200;
-            if (samples > 0) times[laps++] = split;
-            last_samples = samples;
+            if (state == TIMING && samples >= last_samples + 2000)
+            {
+                times[laps++] = samples - last_samples;
+                hold_time = last_samples;
+                last_samples = samples;
+            }
+            else if (state == WAITING)
+            {
+                state = TIMING;
+                samples = 0;
+                last_samples = 0;
+                hold_time = -1;
+                laps = 0;
+            }
         }
-        else if (state == WAITING && !poll_receiver(recv0_in))
-        {
-            state = TIMING;
-            samples = 0;
-            last_samples = 0;
-            laps = 0;
-        }
+        if (last_samples < samples - 2000) hold_time = -1;
     }
 }
 
+// Happens every 10ms, used for display updating
 extern "C" void TIM4_irq_handler(void)
 {
     if (TIM_GetITStatus(TIM4, TIM_IT_Update) != RESET)
     {
         TIM_ClearITPendingBit(TIM4, TIM_IT_Update);
-        if (mode == RACE && state == TIMING)
+        if (mode == RACE && hold_time >= 0)
         {
-            increment_cs();
-        }
-
-        if (mode == RACE && display_last)
-        {
-            if (display_last > 0) display_last--;
-            if (samples >= 200) write_time(last_centiseconds, last_seconds, last_minutes);
-            else write_time(centiseconds, seconds, minutes);
+            write_time(last_samples - hold_time);
         }
         else if (mode == TEXT)
         {
@@ -322,18 +303,19 @@ extern "C" void TIM4_irq_handler(void)
             }
             else
             {
-                display_last--;
-                write_string(display_last / 40 + 6, text.c_str());
-                if (display_last < ((text.length() + 6) * -40))
+                hold_time--;
+                write_string(hold_time / 40 + 6, text.c_str());
+                if (hold_time < ((text.length() + 6) * -40))
                 {
-                    display_last = 0;
+                    hold_time = 0;
                 }
             }
         }
-        else write_time(centiseconds, seconds, minutes);
+        else write_time(samples);
     }
 }
 
+// Happens every 1ms, used for sensor reading and timing
 extern "C" void TIM3_irq_handler(void)
 {
     if (TIM_GetITStatus(TIM3, TIM_IT_Update) != RESET)
@@ -343,6 +325,8 @@ extern "C" void TIM3_irq_handler(void)
             pinHigh(recv0_out);
             pinHigh(recv1_out);
             poll_receivers();
+
+            if (mode == RACE && state == TIMING) samples++;
         } else {
             pinLow(recv0_out);
             pinLow(recv1_out);
@@ -353,7 +337,6 @@ extern "C" void TIM3_irq_handler(void)
 void finalize_time()
 {
     state = STOPPED;
-    display_last = -1;
     if (samples > 0)
     {
         int best = samples;
@@ -361,15 +344,13 @@ void finalize_time()
         for (int i = 0; i < laps; i++)
         {
             if (i > 0) message += ", ";
-            message += get_time_string(times[i] % 100, times[i] / 100 % 60, times[i] / 6000);
+            message += get_time_string(times[i]);
             if (times[i] < best) best = times[i];
         }
         Spark.publish("slack-message", message, 60, PRIVATE);
-        //message = "Total time: " + get_time_string(last_centiseconds, last_seconds, last_minutes);
+        //message = "Total time: " + get_time_string(last_samples);
         //Spark.publish("slack-message", message, 60, PRIVATE);
-        last_minutes = best / 6000;
-        last_seconds = best / 100 % 60;
-        last_centiseconds = best % 100;
+        hold_time = last_samples - best;
     }
 }
 
@@ -388,13 +369,11 @@ void check_buttons()
         }
         if (digitalRead(up_in) == HIGH) // Button B
         {
-            centiseconds = seconds = minutes = 0;
-            last_centiseconds = last_seconds = last_minutes = 0;
             state = WAITING;
             samples = 0;
             last_samples = 0;
             laps = 0;
-            display_last = 0;
+            hold_time = -1;
         }
     }
     if (digitalRead(exit_in) == LOW) // Button C
@@ -403,12 +382,11 @@ void check_buttons()
         if (mode > TEXT) mode = CLOCK;
         if (mode == RACE)
         {
-            centiseconds = seconds = minutes = 0;
             state = STOPPED;
             samples = 0;
             last_samples = 0;
             laps = 0;
-            display_last = 0;
+            hold_time = -1;
         }
         debounce = millis() + 250;
     }
@@ -441,9 +419,7 @@ void loop()
     }
     else if (mode == CLOCK)
     {
-        minutes = Time.hourFormat12();
-        seconds = Time.minute();
-        centiseconds = Time.second();
+        samples = Time.hourFormat12() * 60000 + Time.minute() * 1000 + Time.second() * 10;
         if (Time.isAM()) {
             extraLeds |= amLed;
             extraLeds &= ~pmLed;
@@ -451,7 +427,7 @@ void loop()
             extraLeds &= ~amLed;
             extraLeds |= pmLed;
         }
-        if (centiseconds & 1) {
+        if (Time.second() & 1) {
             extraLeds |= colonLed | dotLed;
         } else {
             extraLeds &= ~(colonLed | dotLed);
