@@ -236,16 +236,31 @@ void write_string(int start, const char* str)
     pinHigh(display_rclk);
 }
 
+int avgA[25];
+int avgB[25];
+int avgiA = 0;
+int avgiB = 0;
 int poll_receiver(int pin)
 {
     int val = analogRead(pin);
+    int total = 0;
+    if (pin == recv0_in) {
+        avgA[avgiA] = val;
+        avgiA = (avgiA + 1) % 25;
+        for (int i = 0; i < 25; i++) total += avgA[i];
+    } else if (pin == recv1_in) {
+        avgB[avgiB] = val;
+        for (int i = 0; i < 25; i++) total += avgB[i];
+        avgiB = (avgiB + 1) % 25;
+    }
+    bool triggered = val < (total / 25) - 200;
     if (mode == DEBUG1 || mode == DEBUG2)
     {
-        if (val >= 900) extraLeds &= ~dotLed;
-        else extraLeds |= dotLed;
-        write_number(val);
+        if (triggered) extraLeds |= dotLed;
+        else extraLeds &= ~dotLed;
+        write_number(total / 25);
     }
-    return val >= 900;
+    return triggered;
 }
 
 void poll_receivers()
@@ -264,9 +279,9 @@ void poll_receivers()
     {
         if (state == STOPPED) return;
 
-        if (!poll_receiver(recv0_in))
+        if (poll_receiver(recv0_in))
         {
-            if (state == TIMING && samples >= last_samples + 2000)
+            if (state == TIMING && samples >= last_samples + 1000)
             {
                 times[laps++] = samples - last_samples;
                 hold_time = last_samples;
