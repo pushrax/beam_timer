@@ -115,11 +115,12 @@ enum Modes
     TEXT
 };
 
-int state = STOPPED, mode = TEXT, hold_time = -1, last_samples = 0, samples = 0;
+int state = STOPPED, mode = TEXT, hold_time = -1, last_samples = 0, samples = 0, last_samples_speed = 0;
 
 String text = "Connecting";
 
 uint8_t laps = 0;
+int speeds[256];
 int times[256];
 
 uint8_t extraLeds = 0;
@@ -243,17 +244,19 @@ int avgiB = 0;
 int poll_receiver(int pin)
 {
     int val = analogRead(pin);
+    bool triggered = false;
     int total = 0;
     if (pin == recv0_in) {
         avgA[avgiA] = val;
         avgiA = (avgiA + 1) % 25;
         for (int i = 0; i < 25; i++) total += avgA[i];
+        triggered = val < (total / 25) - 300;
     } else if (pin == recv1_in) {
         avgB[avgiB] = val;
-        for (int i = 0; i < 25; i++) total += avgB[i];
         avgiB = (avgiB + 1) % 25;
+        for (int i = 0; i < 25; i++) total += avgB[i];
+        triggered = val < (total / 25) - 150;
     }
-    bool triggered = val < (total / 25) - 200;
     if (mode == DEBUG1 || mode == DEBUG2)
     {
         if (triggered) extraLeds |= dotLed;
@@ -283,7 +286,8 @@ void poll_receivers()
         {
             if (state == TIMING && samples >= last_samples + 1000)
             {
-                times[laps++] = samples - last_samples;
+                times[laps] = samples - last_samples;
+                speeds[laps++] = samples - last_samples_speed;
                 hold_time = last_samples;
                 last_samples = samples;
             }
@@ -292,9 +296,14 @@ void poll_receivers()
                 state = TIMING;
                 samples = 0;
                 last_samples = 0;
+                last_samples_speed = 0;
                 hold_time = -1;
                 laps = 0;
             }
+        }
+        if (poll_receiver(recv1_in) && samples >= last_samples_speed + 1000)
+        {
+            last_samples_speed = samples;
         }
         if (last_samples < samples - 2000) hold_time = -1;
     }
@@ -352,7 +361,7 @@ extern "C" void TIM3_irq_handler(void)
 void finalize_time()
 {
     state = STOPPED;
-    if (samples > 0)
+    if (laps > 0)
     {
         int best = samples;
         String message = String(laps, DEC) + " lap completed: ";
@@ -360,6 +369,14 @@ void finalize_time()
         {
             if (i > 0) message += ", ";
             message += get_time_string(times[i]);
+            if (times[i] < best) best = times[i];
+        }
+        Spark.publish("slack-message", message, 60, PRIVATE);
+        message = "Speeds: ";
+        for (int i = 0; i < laps; i++)
+        {
+            if (i > 0) message += ", ";
+            message += String(1080 / speeds[i], DEC) + "km/h"; // 30cm apart
             if (times[i] < best) best = times[i];
         }
         Spark.publish("slack-message", message, 60, PRIVATE);
@@ -387,6 +404,7 @@ void check_buttons()
             state = WAITING;
             samples = 0;
             last_samples = 0;
+            last_samples_speed = 0;
             laps = 0;
             hold_time = -1;
         }
@@ -400,6 +418,7 @@ void check_buttons()
             state = STOPPED;
             samples = 0;
             last_samples = 0;
+            last_samples_speed = 0;
             laps = 0;
             hold_time = -1;
         }
