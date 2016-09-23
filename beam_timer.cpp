@@ -329,7 +329,7 @@ extern "C" void TIM4_irq_handler(void)
             {
                 hold_time--;
                 write_string(hold_time / 40 + 6, text.c_str());
-                if (hold_time < ((text.length() + 6) * -40))
+                if (hold_time < ((int) (text.length() + 6) * -40))
                 {
                     hold_time = 0;
                 }
@@ -371,7 +371,7 @@ void finalize_time()
             message += get_time_string(times[i]);
             if (times[i] < best) best = times[i];
         }
-        Spark.publish("slack-message", message, 60, PRIVATE);
+        Particle.publish("slack-message", message, 60, PRIVATE);
         message = "Speeds: ";
         for (int i = 0; i < laps; i++)
         {
@@ -379,9 +379,9 @@ void finalize_time()
             message += String(1080 / speeds[i], DEC) + "km/h"; // 30cm apart
             if (times[i] < best) best = times[i];
         }
-        Spark.publish("slack-message", message, 60, PRIVATE);
+        Particle.publish("slack-message", message, 60, PRIVATE);
         //message = "Total time: " + get_time_string(last_samples);
-        //Spark.publish("slack-message", message, 60, PRIVATE);
+        //Particle.publish("slack-message", message, 60, PRIVATE);
         hold_time = last_samples - best;
     }
 }
@@ -435,17 +435,17 @@ void loop()
     if (shouldConnect)
     {
         shouldConnect = false;
-        Spark.connect();
+        Particle.connect();
         return;
     }
-    if (Spark.connected() && !connected)
+    if (Particle.connected() && !connected)
     {
         connected = true;
 
         text = "Shopify";
         if (mode == TEXT) mode = CLOCK;
         Time.zone(-4);
-        Spark.function("text", setText);
+        Particle.function("text", setText);
     }
     if (mode == RACE)
     {
@@ -467,9 +467,9 @@ void loop()
             extraLeds &= ~(colonLed | dotLed);
         }
 
-        if (nextSync < millis() && Spark.connected())
+        if (nextSync < millis() && Particle.connected())
         {
-            Spark.syncTime();
+            Particle.syncTime();
             nextSync = millis() + (60 * 60 * 1000); // 1 hour
         }
     }
@@ -497,8 +497,8 @@ void loop()
 
 void setup()
 {
-    Wiring_TIM3_Interrupt_Handler = TIM3_irq_handler;
-    Wiring_TIM4_Interrupt_Handler = TIM4_irq_handler;
+    attachSystemInterrupt(SysInterrupt_TIM3_Update, TIM3_irq_handler);
+    attachSystemInterrupt(SysInterrupt_TIM4_Update, TIM4_irq_handler);
 
     pinMode(display_rclk, OUTPUT);
     pinMode(display_srclk, OUTPUT);
